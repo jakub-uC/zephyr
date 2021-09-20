@@ -5,24 +5,42 @@
  */
 
 #include <ctype.h>
+#include <stdio.h>
 #include "shell_ops.h"
 
+#define CMD_CURSOR_LEN 8
 void z_shell_op_cursor_vert_move(const struct shell *shell, int32_t delta)
 {
-	if (delta != 0) {
-		z_shell_raw_fprintf(shell->fprintf_ctx, "\033[%d%c",
-				    delta > 0 ? delta : -delta,
-				    delta > 0 ? 'A' : 'B');
+	uint8_t cmd[CMD_CURSOR_LEN];
+	char dir = delta > 0 ? 'A' : 'B';
+
+	if (delta == 0) {
+		return;
 	}
+
+	if (delta < 0) {
+		delta = -delta;
+	}
+
+	sprintf(cmd, "\e[%d%c", delta, dir);
+	Z_SHELL_VT100_CMD(shell, cmd);
 }
 
 void z_shell_op_cursor_horiz_move(const struct shell *shell, int32_t delta)
 {
-	if (delta != 0) {
-		z_shell_raw_fprintf(shell->fprintf_ctx, "\033[%d%c",
-				    delta > 0 ? delta : -delta,
-				    delta > 0 ? 'C' : 'D');
+	uint8_t cmd[CMD_CURSOR_LEN];
+	char dir = delta > 0 ? 'C' : 'D';
+
+	if (delta == 0) {
+		return;
 	}
+
+	if (delta < 0) {
+		delta = -delta;
+	}
+
+	sprintf(cmd, "\e[%d%c", delta, dir);
+	Z_SHELL_VT100_CMD(shell, cmd);
 }
 
 /* Function returns true if command length is equal to multiplicity of terminal
@@ -285,8 +303,8 @@ static void char_replace(const struct shell *shell, char data)
 
 void z_shell_op_char_insert(const struct shell *shell, char data)
 {
-	if (shell->ctx->internal.flags.insert_mode &&
-		(shell->ctx->cmd_buff_len != shell->ctx->cmd_buff_pos)) {
+	if (z_flag_insert_mode_get(shell) &&
+	    (shell->ctx->cmd_buff_len != shell->ctx->cmd_buff_pos)) {
 		char_replace(shell, data);
 	} else {
 		data_insert(shell, &data, 1);
@@ -409,25 +427,43 @@ void z_shell_print_stream(const void *user_ctx, const char *data, size_t len)
 	z_shell_write((const struct shell *) user_ctx, data, len);
 }
 
+#define CMD_BGCOLOR_LEN 7
+#define CMD_BGCOLOR_POS	4 // bgcolor position in the command array
 static void vt100_bgcolor_set(const struct shell *shell,
 			      enum shell_vt100_color bgcolor)
 {
+	if (!IS_ENABLED(CONFIG_SHELL_VT100_COLORS)) {
+		return;
+	}
+
+	if (bgcolor >= VT100_COLOR_END) {
+		return;
+	}
+
 	if ((bgcolor == SHELL_NORMAL) ||
 	    (shell->ctx->vt100_ctx.col.bgcol == bgcolor)) {
 		return;
 	}
 
-	/* -1 because default value is first in enum */
-	uint8_t cmd[] = SHELL_VT100_BGCOLOR(bgcolor - 1);
-
 	shell->ctx->vt100_ctx.col.bgcol = bgcolor;
-	z_shell_raw_fprintf(shell->fprintf_ctx, "%s", cmd);
 
+	uint8_t cmd[CMD_BGCOLOR_LEN] = "\e[403 m";
+	cmd[CMD_BGCOLOR_POS] = (uint8_t)(bgcolor + 0x30);
+	Z_SHELL_VT100_CMD(shell, cmd);
 }
 
+#define CMD_COLOR_LEN	8
+#define CMD_COLOR_POS	5 // color position in the command array
 void z_shell_vt100_color_set(const struct shell *shell,
 			     enum shell_vt100_color color)
 {
+	if (!IS_ENABLED(CONFIG_SHELL_VT100_COLORS)) {
+		return;
+	}
+
+	if (color >= VT100_COLOR_END) {
+		return;
+	}
 
 	if (shell->ctx->vt100_ctx.col.col == color) {
 		return;
@@ -436,20 +472,21 @@ void z_shell_vt100_color_set(const struct shell *shell,
 	shell->ctx->vt100_ctx.col.col = color;
 
 	if (color != SHELL_NORMAL) {
-
-		uint8_t cmd[] = SHELL_VT100_COLOR(color - 1);
-
-		z_shell_raw_fprintf(shell->fprintf_ctx, "%s", cmd);
+		uint8_t cmd[CMD_COLOR_LEN] = "\e[1;3 m";
+		cmd[CMD_COLOR_POS] = (uint8_t)(color + 0x30);
+		Z_SHELL_VT100_CMD(shell, cmd);
 	} else {
-		static const uint8_t cmd[] = SHELL_VT100_MODESOFF;
-
-		z_shell_raw_fprintf(shell->fprintf_ctx, "%s", cmd);
+		Z_SHELL_VT100_CMD(shell, SHELL_VT100_MODESOFF);
 	}
 }
 
 void z_shell_vt100_colors_restore(const struct shell *shell,
-				       const struct shell_vt100_colors *color)
+				  const struct shell_vt100_colors *color)
 {
+	if (!IS_ENABLED(CONFIG_SHELL_VT100_COLORS)) {
+		return;
+	}
+
 	z_shell_vt100_color_set(shell, color->col);
 	vt100_bgcolor_set(shell, color->bgcol);
 }
@@ -458,7 +495,7 @@ void z_shell_vfprintf(const struct shell *shell, enum shell_vt100_color color,
 		      const char *fmt, va_list args)
 {
 	if (IS_ENABLED(CONFIG_SHELL_VT100_COLORS) &&
-	    shell->ctx->internal.flags.use_colors &&
+	    z_flag_use_colors_get(shell)	  &&
 	    (color != shell->ctx->vt100_ctx.col.col)) {
 		struct shell_vt100_colors col;
 
