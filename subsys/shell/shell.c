@@ -1224,6 +1224,7 @@ static void transport_evt_handler(enum shell_transport_evt evt_type, void *ctx)
 static void shell_log_process(const struct shell *sh)
 {
 	bool processed = false;
+	bool readline_active = sh->ctx->readline_state == SHELL_READLINE_ACTIVE;
 
 	do {
 		if (!IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE)) {
@@ -1233,7 +1234,13 @@ static void shell_log_process(const struct shell *sh)
 					sh->log_backend);
 		}
 
-		z_shell_print_prompt_and_cmd(sh);
+		if (readline_active) {
+			/* During readline: restore input without prompt */
+			z_shell_print_cmd(sh);
+			z_shell_op_cursor_position_synchronize(sh);
+		} else {
+			z_shell_print_prompt_and_cmd(sh);
+		}
 
 		/* Arbitrary delay added to ensure that prompt is
 		 * readable and can be used to enter further commands.
@@ -1881,6 +1888,13 @@ int shell_readline(const struct shell *sh, uint8_t *buf, size_t len, k_timeout_t
 
 	while (true) {
 		state_collect(sh);
+
+		/* Process deferred logs during readline */
+		if (IS_ENABLED(CONFIG_SHELL_LOG_BACKEND) &&
+		    k_event_test(&sh->ctx->signal_event, SHELL_SIGNAL_LOG_MSG)) {
+			k_event_clear(&sh->ctx->signal_event, SHELL_SIGNAL_LOG_MSG);
+			shell_log_process(sh);
+		}
 
 		if (sh->ctx->readline_state == SHELL_READLINE_DONE) {
 			if (buf == NULL || sh->ctx->cmd_buff_len >= len) {

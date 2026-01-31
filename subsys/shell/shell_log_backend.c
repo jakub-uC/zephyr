@@ -172,6 +172,7 @@ static void process_log_msg(const struct shell *sh,
 {
 	unsigned int key = 0;
 	uint32_t flags = SHELL_LOG_BASE_FLAGS;
+	bool readline_active = sh->ctx->readline_state == SHELL_READLINE_ACTIVE;
 
 	if (colors) {
 		flags |= LOG_OUTPUT_FLAG_COLORS;
@@ -189,7 +190,7 @@ static void process_log_msg(const struct shell *sh,
 		} else {
 			z_shell_lock(sh);
 		}
-		if (!z_flag_cmd_ctx_get(sh)) {
+		if (!z_flag_cmd_ctx_get(sh) || readline_active) {
 			z_shell_cmd_line_erase(sh);
 		}
 	}
@@ -197,7 +198,11 @@ static void process_log_msg(const struct shell *sh,
 	log_output_msg_process(log_output, &msg->log, flags);
 
 	if (locked) {
-		if (!z_flag_cmd_ctx_get(sh)) {
+		if (readline_active) {
+			/* During readline: restore input without prompt */
+			z_shell_print_cmd(sh);
+			z_shell_op_cursor_position_synchronize(sh);
+		} else if (!z_flag_cmd_ctx_get(sh)) {
 			z_shell_print_prompt_and_cmd(sh);
 		}
 		if (k_is_in_isr()) {
